@@ -7,29 +7,27 @@ import DrawCard from '../components/dashboard/DrawCard';
 import Navbar from '../components/dashboard/Navbar';
 import ScoresCard from '../components/dashboard/ScoresCard';
 import SubscriptionCard from '../components/dashboard/SubscriptionCard';
+import SubscriptionStatusCard from '../components/dashboard/SubscriptionStatusCard';
+import WinningsCard from '../components/dashboard/WinningsCard';
 import { useAuth } from '../components/AuthProvider';
+import {
+  currentDrawMonthLabel,
+  generateDrawAlgorithmic,
+  generateDrawRandom,
+  matchCountFromScores,
+} from '../lib/lottery';
 import { supabase } from '../lib/supabaseClient';
-import { ADMIN_EMAIL, DEMO_SUBSCRIBER_EMAIL } from '../lib/subscriptionAccess';
+import { ADMIN_EMAIL, isSubscriptionActive } from '../lib/subscriptionAccess';
+import { canEnterScores, canParticipateInDraw, monthlyFeeFromPlan } from '../lib/subscriptionHelpers';
 import { setSubscription } from '../store/slices/subscriptionSlice';
 import { toggleTheme } from '../store/slices/themeSlice';
 import { setUser } from '../store/slices/userSlice';
+import { fetchUsersForAdmin } from '../lib/adminUsers';
 
-const getResultMessage = (count) =>
-  count === 5 ? 'Jackpot' : count === 4 ? 'Great' : count === 3 ? 'Good' : count == null ? 'Waiting for draw' : 'Try again';
-
-const generateDraw = () => {
-  const set = new Set();
-  while (set.size < 5) set.add(Math.floor(Math.random() * 45) + 1);
-  return Array.from(set).sort((a, b) => a - b);
-};
-
-const checkMatches = (scores, drawNumbers) => {
-  const userSet = new Set((scores ?? []).map((s) => s.score));
-  const drawSet = new Set(drawNumbers ?? []);
-  let count = 0;
-  for (const n of userSet) if (drawSet.has(n)) count += 1;
-  return count;
-};
+function todayISO() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -42,6 +40,7 @@ export default function Dashboard() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [scores, setScores] = useState([]);
   const [scoreInput, setScoreInput] = useState('');
+  const [scoreDate, setScoreDate] = useState(todayISO);
   const [addingScore, setAddingScore] = useState(false);
   const [charities, setCharities] = useState([]);
   const [selectedCharityId, setSelectedCharityId] = useState('');
@@ -53,19 +52,43 @@ export default function Dashboard() {
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [totalDraws, setTotalDraws] = useState(0);
+  const [drawType, setDrawType] = useState('random');
+  const [winnings, setWinnings] = useState([]);
+  const [winningsLoading, setWinningsLoading] = useState(false);
+  const [jackpotAmount, setJackpotAmount] = useState(null);
+  const [adminUsersSource, setAdminUsersSource] = useState('profiles');
 
   const isAdmin = user?.email === ADMIN_EMAIL;
-  const isSubscriber = subscription.status === 'active' || user?.email === DEMO_SUBSCRIBER_EMAIL;
+  const isSubscriber = isSubscriptionActive(subscription, user);
   const role = isAdmin ? 'admin' : isSubscriber ? 'subscriber' : 'public';
 
-  const matchCount = useMemo(
-    () => (latestDraw?.numbers?.length ? checkMatches(scores, latestDraw.numbers) : null),
-    [scores, latestDraw]
-  );
-  const resultMessage = getResultMessage(matchCount);
+  const drawMonthLabel = currentDrawMonthLabel(new Date());
+
+  const participate = canParticipateInDraw(subscription, user, scores.length, isAdmin);
+  const scoreBlockReason = !canEnterScores(subscription, user, isAdmin)
+    ? 'Subscription inactive or expired. Renew to add or change scores.'
+    : null;
+
+  const participationMessage = useMemo(() => {
+    if (participate || isAdmin) return null;
+    if (!isSubscriptionActive(subscription, user)) return 'Renew subscription to participate in draws.';
+    if (scores.length < 5) {
+      const n = 5 - scores.length;
+      return `Need ${n} more score${n === 1 ? '' : 's'} before this draw counts.`;
+    }
+    return null;
+  }, [participate, isAdmin, subscription, user, scores.length]);
+
+  const matchCount = useMemo(() => {
+    if (!latestDraw?.numbers?.length || !participate) return null;
+    return matchCountFromScores(scores, latestDraw.numbers);
+  }, [scores, latestDraw, participate]);
+
   const currentCharityName = currentPreference
     ? charities.find((c) => String(c.id) === String(currentPreference.charity_id))?.name
     : null;
+
+  const monthlyFee = monthlyFeeFromPlan(subscription.plan);
 
   useEffect(() => {
     dispatch(setUser({ email: user?.email ?? null }));
@@ -75,48 +98,139 @@ export default function Dashboard() {
     if (!user?.id) return;
     (async () => {
       try {
-        const [{ data: subData }, { data: scoresData }, { data: charitiesData }, { data: prefData }, { data: drawData }, { count: drawCount }] =
-          await Promise.all([
-            supabase.from('user_subscription').select('status, plan').eq('user_id', user.id).maybeSingle(),
-            supabase.from('scores').select('id, score, created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
-            supabase.from('charities').select('id, name, description').order('name', { ascending: true }),
-            supabase.from('user_charity').select('user_id, charity_id, percentage').eq('user_id', user.id).maybeSingle(),
-            supabase.from('draws').select('id, numbers, created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-            supabase.from('draws').select('*', { count: 'exact', head: true }),
-          ]);
-        dispatch(setSubscription({ status: subData?.status ?? 'inactive', plan: subData?.plan ?? '' }));
-        setScores(scoresData ?? []);
-        setCharities(charitiesData ?? []);
+        // Use select('*') so missing optional columns (draw_month, score_date, renewal_date) do not break PostgREST.
+        const [
+          subRes,
+          scoresRes,
+          charitiesRes,
+          prefRes,
+          drawRes,
+          drawCountRes,
+        ] = await Promise.all([
+          supabase.from('user_subscription').select('*').eq('user_id', user.id).maybeSingle(),
+          supabase
+            .from('scores')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(5),
+          supabase.from('charities').select('id, name, description').order('name', { ascending: true }),
+          supabase.from('user_charity').select('user_id, charity_id, percentage').eq('user_id', user.id).maybeSingle(),
+          supabase.from('draws').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          supabase.from('draws').select('*', { count: 'exact', head: true }),
+        ]);
+
+        const subData = subRes.data;
+        if (subRes.error) {
+          setError((prev) => prev || `Subscription: ${subRes.error.message}`);
+        }
+        dispatch(
+          setSubscription({
+            status: subData?.status ?? 'inactive',
+            plan: subData?.plan ?? '',
+            renewal_date: subData?.renewal_date ?? null,
+          })
+        );
+
+        setScores(scoresRes.error ? [] : scoresRes.data ?? []);
+        if (scoresRes.error) {
+          setError((prev) => prev || `Scores: ${scoresRes.error.message}`);
+        }
+
+        const charitiesData = charitiesRes.error ? [] : charitiesRes.data ?? [];
+        setCharities(charitiesData);
+        const prefData = prefRes.error ? null : prefRes.data;
         setCurrentPreference(prefData ?? null);
         setSelectedCharityId(
           prefData?.charity_id ? String(prefData.charity_id) : charitiesData?.length ? String(charitiesData[0].id) : ''
         );
         setPercentage(Number(prefData?.percentage) || 10);
-        setLatestDraw(drawData ?? null);
-        setTotalDraws(drawCount ?? 0);
-      } catch {
-        setError('Could not load dashboard data.');
+        setLatestDraw(drawRes.error ? null : drawRes.data ?? null);
+        setTotalDraws(drawCountRes.count ?? 0);
+      } catch (e) {
+        setError(e?.message || 'Could not load dashboard data.');
       }
     })();
   }, [dispatch, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      setWinningsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('winnings')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (!cancelled) setWinnings(error ? [] : data ?? []);
+      } catch {
+        if (!cancelled) setWinnings([]);
+      } finally {
+        if (!cancelled) setWinningsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    (async () => {
+      try {
+        const { data } = await supabase.from('jackpot_pool').select('amount').eq('id', 1).maybeSingle();
+        setJackpotAmount(data?.amount != null ? Number(data.amount) : 0);
+      } catch {
+        setJackpotAmount(null);
+      }
+    })();
+  }, [isAdmin, latestDraw?.id]);
 
   useEffect(() => {
     if (!isAdmin) return;
     (async () => {
       setUsersLoading(true);
       try {
-        const { data } = await supabase.from('profiles').select('email').not('email', 'is', null).order('email', { ascending: true });
-        setUsers(data ?? []);
+        const { users, source } = await fetchUsersForAdmin();
+        setUsers(users);
+        setAdminUsersSource(source);
       } catch {
-        setError('Could not load users list. Ensure `profiles.email` exists.');
+        setError('Could not load users list.');
       } finally {
         setUsersLoading(false);
       }
     })();
   }, [isAdmin]);
 
+  const refreshAfterDraw = async () => {
+    if (!user?.id) return;
+    const { data: drawData } = await supabase
+      .from('draws')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setLatestDraw(drawData ?? null);
+    const { count } = await supabase.from('draws').select('*', { count: 'exact', head: true });
+    setTotalDraws(count ?? 0);
+    const { data: winData } = await supabase
+      .from('winnings')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    setWinnings(winData ?? []);
+    if (isAdmin) {
+      const { data: jp } = await supabase.from('jackpot_pool').select('amount').eq('id', 1).maybeSingle();
+      setJackpotAmount(jp?.amount != null ? Number(jp.amount) : 0);
+    }
+  };
+
   const handleAddScore = async () => {
-    if (!isSubscriber && !isAdmin) return;
+    if (!canEnterScores(subscription, user, isAdmin)) return;
     const scoreValue = Number(scoreInput);
     if (!Number.isInteger(scoreValue) || scoreValue < 1 || scoreValue > 45) return setError('Score must be an integer between 1 and 45.');
     setAddingScore(true);
@@ -127,8 +241,18 @@ export default function Dashboard() {
         const { data: oldest } = await supabase.from('scores').select('id').eq('user_id', user.id).order('created_at', { ascending: true }).limit(1).single();
         if (oldest?.id) await supabase.from('scores').delete().eq('id', oldest.id);
       }
-      await supabase.from('scores').insert({ user_id: user.id, score: scoreValue });
-      const { data: refreshed } = await supabase.from('scores').select('id, score, created_at').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5);
+      const insert = { user_id: user.id, score: scoreValue, score_date: scoreDate || todayISO() };
+      const { error: insErr } = await supabase.from('scores').insert(insert);
+      if (insErr) {
+        const { error: ins2 } = await supabase.from('scores').insert({ user_id: user.id, score: scoreValue });
+        if (ins2) throw ins2;
+      }
+      const { data: refreshed } = await supabase
+        .from('scores')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(5);
       setScores(refreshed ?? []);
       setScoreInput('');
     } catch {
@@ -139,7 +263,7 @@ export default function Dashboard() {
   };
 
   const handleSavePreference = async () => {
-    if (!isSubscriber && !isAdmin) return;
+    if (!canEnterScores(subscription, user, isAdmin)) return;
     const percent = Number(percentage);
     if (!selectedCharityId) return setError('Please select a charity.');
     if (!Number.isInteger(percent) || percent < 1 || percent > 100) return setError('Percentage must be between 1 and 100.');
@@ -161,12 +285,38 @@ export default function Dashboard() {
     setRunningDraw(true);
     setError('');
     try {
-      await supabase.from('draws').insert({ numbers: generateDraw() });
-      const { data } = await supabase.from('draws').select('id, numbers, created_at').order('created_at', { ascending: false }).limit(1).maybeSingle();
-      setLatestDraw(data ?? null);
-      setTotalDraws((t) => t + 1);
-    } catch {
-      setError('Could not run draw.');
+      const month = currentDrawMonthLabel(new Date());
+      const seed = new Date().getFullYear() * 12 + new Date().getMonth();
+      const numbers = drawType === 'algorithmic' ? generateDrawAlgorithmic(seed) : generateDrawRandom();
+      let inserted = null;
+      const fullInsert = {
+        numbers,
+        draw_month: month,
+        draw_type: drawType,
+        status: 'published',
+      };
+      const { data: rowFull, error: fullErr } = await supabase.from('draws').insert(fullInsert).select('id').single();
+      if (fullErr) {
+        const { data: rowMin, error: minErr } = await supabase.from('draws').insert({ numbers }).select('id').single();
+        if (minErr) throw minErr;
+        inserted = rowMin;
+        setError(
+          (prev) =>
+            prev ||
+            'Draw saved (numbers only). Add columns draw_month, draw_type, status or run supabase/migrations/001_lottery_mvp.sql for full lottery features.'
+        );
+      } else {
+        inserted = rowFull;
+      }
+      const { error: rpcErr } = await supabase.rpc('calculate_draw_winners', { p_draw_id: inserted.id });
+      if (rpcErr) {
+        setError(
+          `Draw published. Payouts were not calculated: ${rpcErr.message}. Apply supabase/migrations/001_lottery_mvp.sql in Supabase.`
+        );
+      }
+      await refreshAfterDraw();
+    } catch (e) {
+      setError(e?.message || 'Could not run draw.');
     } finally {
       setRunningDraw(false);
     }
@@ -185,15 +335,14 @@ export default function Dashboard() {
     }
   };
 
-  /* ── Loading screen ── */
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-900">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-slate-900 dark:bg-slate-100 flex items-center justify-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 dark:bg-slate-100">
             <svg className="animate-spin" width="18" height="18" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="6" stroke="#f8fafc" strokeWidth="2" strokeOpacity="0.3"/>
-              <path d="M14 8a6 6 0 0 0-6-6" stroke="#f8fafc" strokeWidth="2" strokeLinecap="round"/>
+              <circle cx="8" cy="8" r="6" stroke="#f8fafc" strokeWidth="2" strokeOpacity="0.3" />
+              <path d="M14 8a6 6 0 0 0-6-6" stroke="#f8fafc" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400">Loading dashboard…</p>
@@ -205,8 +354,6 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
       <div className="mx-auto flex max-w-6xl flex-col gap-5 p-5 lg:p-6">
-
-        {/* Navbar */}
         <Navbar
           email={user?.email}
           themeMode={themeMode}
@@ -215,44 +362,27 @@ export default function Dashboard() {
           loggingOut={loggingOut}
         />
 
-        {/* Error banner */}
         {error && (
           <div className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-400/30 dark:bg-red-500/10">
-            <svg className="mt-0.5 shrink-0 text-red-500 dark:text-red-400" width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.2"/>
-              <path d="M8 5v3.5M8 10.5v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
-            </svg>
             <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
-            <button
-              type="button"
-              onClick={() => setError('')}
-              className="ml-auto cursor-pointer text-red-400 hover:text-red-600 dark:hover:text-red-300 transition shrink-0"
-              aria-label="Dismiss"
-            >
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-              </svg>
+            <button type="button" onClick={() => setError('')} className="ml-auto shrink-0 text-red-400 hover:text-red-600" aria-label="Dismiss">
+              ×
             </button>
           </div>
         )}
 
-        {/* ── Role: public ── */}
         {role === 'public' && (
           <div className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-800">
-            <div className="mx-auto mb-4 w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
-              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" className="text-slate-400 dark:text-slate-500">
-                <circle cx="8" cy="6" r="3" stroke="currentColor" strokeWidth="1.2"/>
-                <path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-              </svg>
-            </div>
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-1">No active subscription</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Upgrade to access scores, draws, and charity features.</p>
+            <h2 className="mb-1 text-sm font-semibold text-slate-900 dark:text-slate-100">No active subscription</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Subscribe to access draw entry, scores, and charity allocation.</p>
           </div>
         )}
 
-        {/* ── Role: subscriber ── */}
         {role === 'subscriber' && (
           <div className="grid gap-5 lg:grid-cols-2">
+            <div className="lg:col-span-2">
+              <SubscriptionStatusCard subscription={subscription} user={user} />
+            </div>
             <SubscriptionCard
               status={subscription.status}
               plan={subscription.plan}
@@ -263,10 +393,15 @@ export default function Dashboard() {
             <ScoresCard
               scores={scores}
               scoreInput={scoreInput}
+              scoreDate={scoreDate}
               onScoreInputChange={setScoreInput}
+              onScoreDateChange={setScoreDate}
               onAddScore={handleAddScore}
               loading={addingScore}
+              canEdit={canEnterScores(subscription, user, isAdmin)}
+              blockReason={scoreBlockReason}
             />
+            <WinningsCard rows={winnings} loading={winningsLoading} />
             <CharityCard
               charities={charities}
               selectedCharityId={selectedCharityId}
@@ -276,40 +411,41 @@ export default function Dashboard() {
               onPercentageChange={setPercentage}
               onSave={handleSavePreference}
               loading={savingPreference}
+              monthlyFeeEstimate={monthlyFee}
             />
             <DrawCard
               latestDraw={latestDraw}
               matchCount={matchCount}
-              resultMessage={resultMessage}
-              isAdmin={false}
-              onRunDraw={handleRunDraw}
-              runningDraw={runningDraw}
+              drawMonthLabel={drawMonthLabel}
+              participationEligible={participate}
+              participationMessage={participationMessage}
             />
           </div>
         )}
 
-        {/* ── Role: admin ── */}
         {role === 'admin' && (
           <div className="grid gap-5 lg:grid-cols-2">
             <DrawCard
               latestDraw={latestDraw}
               matchCount={matchCount}
-              resultMessage={resultMessage}
-              isAdmin
-              onRunDraw={handleRunDraw}
-              runningDraw={runningDraw}
+              drawMonthLabel={drawMonthLabel}
+              participationEligible={participate}
+              participationMessage={participationMessage}
             />
             <AdminPanel
               users={users}
+              usersListSource={adminUsersSource}
               loading={usersLoading}
               onRunDraw={handleRunDraw}
               runningDraw={runningDraw}
               latestDraw={latestDraw}
               totalDraws={totalDraws}
+              drawType={drawType}
+              onDrawTypeChange={setDrawType}
+              jackpotAmount={jackpotAmount}
             />
           </div>
         )}
-
       </div>
     </div>
   );

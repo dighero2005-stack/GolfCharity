@@ -7,8 +7,10 @@ export default function CharityCard({
   onPercentageChange,
   onSave,
   loading,
+  monthlyFeeEstimate = 5,
 }) {
   const pct = Math.min(100, Math.max(0, Number(percentage) || 0));
+  const charityShare = ((Number(monthlyFeeEstimate) || 0) * pct) / 100;
 
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
@@ -21,8 +23,14 @@ export default function CharityCard({
           </svg>
         </div>
         <div>
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Charity Preference</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Choose where your contribution goes</p>
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Charity allocation</h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <strong className="text-slate-600 dark:text-slate-300">subscription × {pct}%</strong> of your fee is directed to
+            the selected cause (pool rules apply).
+          </p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">
+            ≈ ${charityShare.toFixed(2)} / month from your plan estimate (${Number(monthlyFeeEstimate).toFixed(2)} base).
+          </p>
         </div>
       </div>
 

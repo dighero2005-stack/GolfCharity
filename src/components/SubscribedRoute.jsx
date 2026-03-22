@@ -27,13 +27,13 @@ export default function SubscribedRoute({ children }) {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await supabase
-          .from('user_subscription')
-          .select('status, plan')
-          .eq('user_id', user.id)
-          .maybeSingle();
+        const { data } = await supabase.from('user_subscription').select('*').eq('user_id', user.id).maybeSingle();
         if (cancelled) return;
-        const sub = { status: data?.status ?? 'inactive', plan: data?.plan ?? '' };
+        const sub = {
+          status: data?.status ?? 'inactive',
+          plan: data?.plan ?? '',
+          renewal_date: data?.renewal_date ?? null,
+        };
         dispatch(setSubscription(sub));
         if (canAccessDashboard(user, sub)) {
           setAllowed(true);

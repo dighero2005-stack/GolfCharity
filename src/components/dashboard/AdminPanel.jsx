@@ -1,4 +1,15 @@
-export default function AdminPanel({ users, loading, onRunDraw, runningDraw, latestDraw, totalDraws }) {
+export default function AdminPanel({
+  users,
+  usersListSource = 'profiles',
+  loading,
+  onRunDraw,
+  runningDraw,
+  latestDraw,
+  totalDraws,
+  drawType = 'random',
+  onDrawTypeChange,
+  jackpotAmount = null,
+}) {
   const hasLatestDraw = Boolean(latestDraw?.numbers?.length);
   const matchSummaryText = hasLatestDraw
     ? 'Latest draw is available for participant match checks.'
@@ -11,7 +22,9 @@ export default function AdminPanel({ users, loading, onRunDraw, runningDraw, lat
       <div className="flex items-start justify-between mb-6">
         <div>
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Admin Dashboard</h2>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">Manage users and system activity</p>
+          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+            Draw engine, pool tiers (5/4/3), jackpot rollover — publish when ready
+          </p>
         </div>
         {/* Total draws badge */}
         <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-1.5">
@@ -29,7 +42,7 @@ export default function AdminPanel({ users, loading, onRunDraw, runningDraw, lat
         {/* ── Draw Control ── */}
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center justify-between gap-3 mb-3">
-            <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Draw Control</h3>
+            <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Draw engine</h3>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
               hasLatestDraw
                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
@@ -38,6 +51,20 @@ export default function AdminPanel({ users, loading, onRunDraw, runningDraw, lat
               <span className={`w-1.5 h-1.5 rounded-full ${hasLatestDraw ? 'bg-emerald-500' : 'bg-slate-400'}`} />
               {hasLatestDraw ? 'Draw active' : 'No draw yet'}
             </span>
+          </div>
+          <div className="mb-3">
+            <label htmlFor="draw-type" className="text-xs font-medium text-slate-600 dark:text-slate-400">
+              Draw type
+            </label>
+            <select
+              id="draw-type"
+              value={drawType}
+              onChange={(e) => onDrawTypeChange(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <option value="random">Random (uniform)</option>
+              <option value="algorithmic">Algorithmic (seeded by month)</option>
+            </select>
           </div>
           <button
             type="button"
@@ -62,6 +89,18 @@ export default function AdminPanel({ users, loading, onRunDraw, runningDraw, lat
               </>
             )}
           </button>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            After publish, the system runs match logic (5/4/3), splits tier pools, and rolls the 5-tier share into jackpot
+            if no jackpot winner. Requires DB migration <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">001_lottery_mvp.sql</code>.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
+          <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Jackpot rollover</h3>
+          <p className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+            {jackpotAmount != null ? `$${Number(jackpotAmount).toFixed(2)}` : '—'}
+          </p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Accumulates when no 5-match winner in a draw.</p>
         </div>
 
         {/* ── Latest Draw ── */}
@@ -99,6 +138,13 @@ export default function AdminPanel({ users, loading, onRunDraw, runningDraw, lat
 
         {/* ── Users List ── */}
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-4">
+          {usersListSource === 'user_subscription' && (
+            <p className="mb-3 rounded-lg bg-slate-50 dark:bg-slate-900 px-3 py-2 text-xs text-slate-600 dark:text-slate-400">
+              No rows in <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">profiles</code> with email. Showing
+              subscriber user IDs from <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">user_subscription</code>.
+              Add profile rows (or a signup trigger) to see emails here.
+            </p>
+          )}
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Users</h3>
             {!loading && users.length > 0 && (
@@ -142,6 +188,14 @@ export default function AdminPanel({ users, loading, onRunDraw, runningDraw, lat
               ))}
             </ul>
           )}
+        </div>
+
+        <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-4">
+          <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Winner verification</h3>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Future: user proof upload → admin approve/reject → mark paid. Table <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">win_claims</code>{' '}
+            is reserved in the migration.
+          </p>
         </div>
 
       </div>

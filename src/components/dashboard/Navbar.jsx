@@ -16,9 +16,12 @@ export default function Navbar({ email, themeMode, onToggleTheme, onLogout, logg
             <line x1="5" y1="11" x2="9" y2="11" stroke="#f8fafc" strokeWidth="1.1" strokeLinecap="round" className="dark:stroke-slate-900"/>
           </svg>
         </div>
-        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
-          Golf Charity
-        </span>
+        <div className="flex flex-col">
+          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 tracking-tight">Golf Charity</span>
+          <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            Subscription lottery
+          </span>
+        </div>
       </div>
 
       {/* ── Right: actions ── */}

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+
+
 /* Tailwind v4 defaults `dark:` to prefers-color-scheme; use class on <html> for manual toggle */
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -14,6 +16,69 @@ body {
   color: rgb(241 245 249);
 }
 
+
+
 #root {
   min-height: 100vh;
+}
+
+/* Premium background watermark: fixed layer, outline-only, ambient drift (slow — not loading-like) */
+@keyframes brand-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+.brand-backdrop-layer {
+  /* Keeps watermark clearly “paper” behind UI */
+  isolation: isolate;
+}
+
+
+
+
+.brand-backdrop-text {
+  font-size: clamp(60px, 12vw, 180px);
+  line-height: 1;
+  
+  /* outline text */
+  color: transparent;
+  -webkit-text-stroke: 1px rgba(100, 116, 139, 0.15); /* slate-500-ish */
+
+  /* subtle visibility */
+  opacity: 0.6;
+
+  /* animation */
+  animation: floatY 5s ease-in-out infinite;
+}
+
+/* subtle floating */
+@keyframes floatY {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.dark .brand-backdrop-text {
+  -webkit-text-stroke: 1px rgba(148, 163, 184, 0.12);
+}
+
+
+
+.dark .brand-backdrop-text {
+  opacity: 0.09;
+  -webkit-text-stroke-color: rgb(248 250 252 / 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-backdrop-text {
+    animation: none;
+  }
 }

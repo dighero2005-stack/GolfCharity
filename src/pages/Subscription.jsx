@@ -29,13 +29,13 @@ export default function Subscription() {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await supabase
-          .from('user_subscription')
-          .select('status, plan')
-          .eq('user_id', user.id)
-          .maybeSingle();
+        const { data } = await supabase.from('user_subscription').select('*').eq('user_id', user.id).maybeSingle();
         if (cancelled) return;
-        const sub = { status: data?.status ?? 'inactive', plan: data?.plan ?? '' };
+        const sub = {
+          status: data?.status ?? 'inactive',
+          plan: data?.plan ?? '',
+          renewal_date: data?.renewal_date ?? null,
+        };
         dispatch(setSubscription(sub));
         if (canAccessDashboard(user, sub)) {
           navigate('/dashboard', { replace: true });
@@ -100,34 +100,34 @@ export default function Subscription() {
         )}
 
         <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-800">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">What you get with Golf Charity</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Subscription lottery — what you get</h2>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-            Subscribe to unlock the full experience: charity-backed draws, your personal score line, and transparent
-            admin oversight for the community.
+            You are subscribing to a monthly draw system: your last five numbers are checked against published draws;
+            prizes split by 3 / 4 / 5 matches; a share of pool funds goes to your chosen charity.
           </p>
           <ul className="mt-4 grid gap-3 sm:grid-cols-2">
             <li className="rounded-lg border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-200">
-              <strong className="text-slate-900 dark:text-slate-100">Score line</strong>
+              <strong className="text-slate-900 dark:text-slate-100">Five-number line</strong>
               <p className="mt-1 text-slate-600 dark:text-slate-400">
-                Enter up to five numbers (1–45) that represent your play; they are checked against each draw.
+                Your entry line (1–45, dated). Oldest drops when you add a sixth — duplicates allowed as separate picks.
               </p>
             </li>
             <li className="rounded-lg border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-200">
-              <strong className="text-slate-900 dark:text-slate-100">Live draws</strong>
+              <strong className="text-slate-900 dark:text-slate-100">Draws & tiers</strong>
               <p className="mt-1 text-slate-600 dark:text-slate-400">
-                See the latest five-number draw and how many of your scores matched (jackpot messaging for five hits).
+                Admin publishes five numbers; 3 / 4 / 5 matches win tier pools; jackpot can roll over if no 5-match winner.
               </p>
             </li>
             <li className="rounded-lg border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-200">
-              <strong className="text-slate-900 dark:text-slate-100">Charity choice</strong>
+              <strong className="text-slate-900 dark:text-slate-100">Charity %</strong>
               <p className="mt-1 text-slate-600 dark:text-slate-400">
-                Pick a supported charity and set what percentage of your participation you want aligned to that cause.
+                Choose a charity and percentage of your subscription share (allocation rules apply to the pool).
               </p>
             </li>
             <li className="rounded-lg border border-slate-100 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-600 dark:bg-slate-900/40 dark:text-slate-200">
-              <strong className="text-slate-900 dark:text-slate-100">Dashboard</strong>
+              <strong className="text-slate-900 dark:text-slate-100">Winnings</strong>
               <p className="mt-1 text-slate-600 dark:text-slate-400">
-                One place for subscription status, scores, charity preference, and draw results after you subscribe.
+                Track pending and paid wins from published draws once payouts are enabled.
               </p>
             </li>
           </ul>
