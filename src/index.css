@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* Tailwind v4 defaults `dark:` to prefers-color-scheme; use class on <html> for manual toggle */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  margin: 0;
+  background-color: rgb(248 250 252);
+  color: rgb(15 23 42);
+}
+
+.dark body {
+  background-color: rgb(15 23 42);
+  color: rgb(241 245 249);
+}
+
+#root {
+  min-height: 100vh;
+}
